@@ -212,14 +212,10 @@
     background: #fff;
     opacity: 0;
     pointer-events: auto;
-    will-change: opacity;
     transition: opacity .3s ease;
   }
   html[data-mode="debug"] .frame-layer iframe { opacity: 1; }
-  /* Keep the attack iframe just above zero: fully transparent iframes are not
-     reliably hit-tested by every browser until they have been painted at a
-     non-zero opacity. 0.001 is visually invisible but keeps the click surface live. */
-  html[data-mode="attack"] .frame-layer iframe { opacity: .001; }
+  html[data-mode="attack"] .frame-layer iframe { opacity: 0; }
   .stage.xray .frame-layer iframe { opacity: .72; }
   .stage.framed .victim { display: none; }
 
