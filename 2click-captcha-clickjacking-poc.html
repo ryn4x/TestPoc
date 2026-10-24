@@ -1,0 +1,1975 @@
+<!doctype html>
+<html lang="en" data-mode="attack">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<meta name="robots" content="noindex">
+<link rel="icon" href="data:,">
+<title>Two-Click CAPTCHA Clickjacking — POC</title>
+<script>
+  try {
+    document.documentElement.dataset.mode =
+      new URLSearchParams(location.search).has('debug') ? 'debug' : 'attack';
+  } catch (error) {
+    document.documentElement.dataset.mode = 'attack';
+  }
+</script>
+<style>
+  :root {
+    --bg: #060a11;
+    --line: #1e2a3e;
+    --text: #e9eef8;
+    --muted: #8c9db6;
+    --lime: #bcff57;
+    --lime-ink: #0b1403;
+    --red: #ff5470;
+    --blue: #77b7ff;
+    --amber: #ffca66;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+    --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    --radius: 15px;
+  }
+
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    color: var(--text);
+    font-family: var(--sans);
+    background:
+      radial-gradient(1100px 620px at 8% -12%, rgba(119, 183, 255, .11), transparent 62%),
+      radial-gradient(900px 520px at 108% 4%, rgba(188, 255, 87, .07), transparent 58%),
+      var(--bg);
+  }
+
+  /* ---------- shell ---------- */
+  .ethics {
+    font: 600 10.5px/1.3 var(--mono);
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    text-align: center;
+    color: #d7ffa0;
+    background: linear-gradient(90deg, rgba(188, 255, 87, .09), rgba(188, 255, 87, .03));
+    border-bottom: 1px solid rgba(188, 255, 87, .18);
+    padding: 8px 14px;
+  }
+  .topbar {
+    max-width: 1040px;
+    margin: 0 auto;
+    padding: 20px 20px 14px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .brand { display: flex; align-items: center; gap: 10px; min-width: 0; }
+  .brand-mark {
+    width: 34px;
+    height: 34px;
+    border-radius: 10px;
+    display: grid;
+    place-items: center;
+    background: linear-gradient(135deg, #d4ff85, #8fe032);
+    color: #0a1403;
+    font-size: 18px;
+    font-weight: 900;
+    box-shadow: 0 6px 18px rgba(156, 240, 60, .18);
+  }
+  .brand-copy { line-height: 1.15; }
+  .brand-copy strong { display: block; font-size: 14px; letter-spacing: -.01em; }
+  .brand-copy span {
+    display: block;
+    color: var(--muted);
+    font: 600 9.5px/1.4 var(--mono);
+    letter-spacing: .12em;
+    text-transform: uppercase;
+  }
+  .mode-pill {
+    font: 800 10px/1 var(--mono);
+    letter-spacing: .14em;
+    padding: 8px 11px;
+    border-radius: 999px;
+    border: 1px solid;
+    margin-left: 2px;
+  }
+  html[data-mode="debug"] .mode-pill {
+    color: var(--amber);
+    border-color: rgba(255, 202, 102, .38);
+    background: rgba(255, 202, 102, .09);
+  }
+  html[data-mode="attack"] .mode-pill {
+    color: #ff8da0;
+    border-color: rgba(255, 84, 112, .38);
+    background: rgba(255, 84, 112, .09);
+  }
+  .top-actions { margin-left: auto; display: flex; gap: 8px; flex-wrap: wrap; }
+  html[data-mode="debug"] .attack-only,
+  html[data-mode="attack"] .debug-only { display: none !important; }
+
+  .btn {
+    appearance: none;
+    border: 1px solid #26344b;
+    background: #121b2a;
+    color: var(--text);
+    border-radius: 10px;
+    padding: 9px 13px;
+    font: 650 12px/1 var(--sans);
+    cursor: pointer;
+    transition: background .16s, border-color .16s, transform .16s, filter .16s;
+    white-space: nowrap;
+  }
+  .btn:hover { background: #172338; border-color: #34486a; }
+  .btn:active { transform: translateY(1px); }
+  .btn.primary {
+    background: linear-gradient(180deg, #d1ff7f, #9ce83d);
+    border-color: #b6f45d;
+    color: #0a1402;
+  }
+  .btn.primary:hover { filter: brightness(1.05); background: linear-gradient(180deg, #d1ff7f, #9ce83d); }
+  .btn.ghost { background: transparent; }
+  .btn.ghost:hover { background: rgba(255, 255, 255, .04); }
+  .btn:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+
+  .wrap { max-width: 1040px; margin: 0 auto; padding: 0 20px 54px; }
+  .stage-shell { max-width: 960px; margin: 0 auto; }
+  .stage {
+    --x1: 30%;
+    --y1: 55%;
+    --x2: 70%;
+    --y2: 67%;
+    position: relative;
+    width: 100%;
+    aspect-ratio: 16 / 10;
+    min-height: 380px;
+    border-radius: 20px;
+    overflow: hidden;
+    border: 1px solid #223149;
+    background: #080d16;
+    box-shadow: 0 34px 90px rgba(0, 0, 0, .55), 0 0 0 1px rgba(255, 255, 255, .02) inset;
+    isolation: isolate;
+    user-select: none;
+    -webkit-user-select: none;
+    container-type: inline-size;
+  }
+  .stage-caption {
+    margin: 12px auto 0;
+    max-width: 780px;
+    text-align: center;
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.65;
+    padding: 0 10px;
+  }
+  .stage-caption b { color: #cbff86; font-weight: 650; }
+  html[data-mode="attack"] .stage-caption b { color: #ffa2b1; }
+
+  /* ---------- layers ---------- */
+  .layer { position: absolute; inset: 0; }
+  .attacker {
+    z-index: 1;
+    pointer-events: none;
+    overflow: hidden;
+    transition: opacity .3s ease;
+    background:
+      radial-gradient(720px 420px at 50% -16%, rgba(255, 84, 112, .20), transparent 64%),
+      radial-gradient(600px 360px at 102% 108%, rgba(119, 183, 255, .16), transparent 62%),
+      linear-gradient(155deg, #15112a 0%, #0b0d1a 52%, #180f1e 100%);
+    color: #f6f0ff;
+  }
+  .victim {
+    z-index: 2;
+    pointer-events: none;
+    overflow: hidden;
+    transition: opacity .3s ease;
+    background:
+      radial-gradient(700px 400px at 50% -20%, rgba(119, 183, 255, .12), transparent 65%),
+      linear-gradient(160deg, #0c1624, #08101b 60%, #0a1422);
+    color: #dbe7f7;
+  }
+  html[data-mode="debug"] .attacker { opacity: 0; }
+  html[data-mode="attack"] .attacker { opacity: 1; }
+  html[data-mode="debug"] .victim { opacity: 1; }
+  html[data-mode="attack"] .victim { opacity: 0; }
+  .stage.xray .victim { opacity: .72; }
+  .stage.xray .attacker { opacity: .5; }
+
+  /* ---------- framed target ---------- */
+  .frame-layer {
+    position: absolute;
+    inset: 0;
+    z-index: 2;
+    pointer-events: none;
+    background: transparent;
+  }
+  .frame-layer[hidden] { display: none; }
+  .frame-layer iframe {
+    display: block;
+    width: 100%;
+    height: 100%;
+    border: 0;
+    background: #fff;
+    opacity: 0;
+    pointer-events: auto;
+    transition: opacity .3s ease;
+  }
+  html[data-mode="debug"] .frame-layer iframe { opacity: 1; }
+  html[data-mode="attack"] .frame-layer iframe { opacity: 0; }
+  .stage.xray .frame-layer iframe { opacity: .72; }
+  .stage.framed .victim { display: none; }
+
+  /* markers stay above both the simulated page and a real iframe */
+  .marker-layer {
+    position: absolute;
+    inset: 0;
+    z-index: 4;
+    pointer-events: none;
+  }
+  html[data-mode="attack"] .stage.framed .hotspot { pointer-events: none; }
+  .stage.xray .attacker-top,
+  .stage.xray .attacker-copy,
+  .stage.xray .attacker-gift,
+  .stage.xray .attacker-foot { opacity: 0; }
+
+  /* ---------- attacker page ---------- */
+  .attacker-bg {
+    position: absolute;
+    inset: 0;
+    background-image: radial-gradient(rgba(255, 255, 255, .07) 1px, transparent 1px);
+    background-size: 24px 24px;
+    opacity: .35;
+    pointer-events: none;
+    -webkit-mask-image: linear-gradient(to bottom, #000, transparent 88%);
+    mask-image: linear-gradient(to bottom, #000, transparent 88%);
+  }
+  .attacker-top {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 3.2% 4.5%;
+    z-index: 2;
+  }
+  .attacker-brand {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    font: 800 clamp(9px, 1.15cqw, 12px)/1 var(--mono);
+    letter-spacing: .12em;
+    color: #e7ddff;
+  }
+  .gbadge {
+    width: clamp(20px, 2.4cqw, 28px);
+    height: clamp(20px, 2.4cqw, 28px);
+    display: grid;
+    place-items: center;
+    border-radius: 8px;
+    background: rgba(255, 255, 255, .08);
+    border: 1px solid rgba(255, 255, 255, .13);
+    font-size: clamp(11px, 1.4cqw, 15px);
+  }
+  .attacker-steps { display: flex; align-items: center; gap: 6px; }
+  .sdot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, .18);
+    border: 1px solid rgba(255, 255, 255, .18);
+    transition: .25s;
+  }
+  .sdot.on { background: var(--lime); border-color: var(--lime); box-shadow: 0 0 10px rgba(188, 255, 87, .6); }
+  .steptext {
+    margin-left: 4px;
+    font: 700 clamp(8px, 1.02cqw, 10px)/1 var(--mono);
+    letter-spacing: .1em;
+    color: #cbbcf0;
+  }
+  .attacker-copy {
+    position: absolute;
+    top: 11%;
+    left: 6%;
+    right: 6%;
+    text-align: center;
+    z-index: 2;
+  }
+  .eyebrow {
+    margin: 0 0 clamp(5px, .9cqw, 9px);
+    font: 800 clamp(8px, 1.1cqw, 11px)/1 var(--mono);
+    letter-spacing: .18em;
+    color: #ff9fb0;
+  }
+  .attacker-copy h2 {
+    margin: 0;
+    font-size: clamp(17px, 3.1cqw, 34px);
+    line-height: 1.06;
+    letter-spacing: -.035em;
+    font-weight: 800;
+  }
+  .attacker-copy h2 span { color: var(--lime); text-shadow: 0 0 30px rgba(188, 255, 87, .25); }
+  .attacker-copy p {
+    margin: clamp(6px, 1.1cqw, 12px) auto 0;
+    max-width: 46ch;
+    color: #c5bad9;
+    font-size: clamp(9px, 1.35cqw, 14px);
+    line-height: 1.5;
+  }
+  .attacker-gift {
+    position: absolute;
+    left: 50%;
+    top: 36%;
+    transform: translate(-50%, -50%);
+    font-size: clamp(42px, 9.5cqw, 100px);
+    line-height: 1;
+    z-index: 1;
+    opacity: .95;
+    pointer-events: none;
+    filter: drop-shadow(0 18px 40px rgba(255, 84, 112, .35));
+  }
+  .attacker-foot {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 3%;
+    text-align: center;
+    font: 600 clamp(7px, .9cqw, 9.5px)/1 var(--mono);
+    letter-spacing: .1em;
+    color: rgba(255, 255, 255, .26);
+    text-transform: uppercase;
+  }
+
+  /* ---------- shared click boxes ---------- */
+  .clickbox {
+    position: absolute;
+    width: clamp(124px, 26%, 250px);
+    height: clamp(44px, 9%, 68px);
+    transform: translate(-50%, -50%);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: clamp(5px, .9cqw, 9px);
+    border-radius: 999px;
+    font: 750 clamp(10px, 1.42cqw, 15px)/1.1 var(--sans);
+    letter-spacing: -.01em;
+    white-space: nowrap;
+    z-index: 4;
+  }
+  #bait1, #hotspot1 { left: var(--x1); top: var(--y1); }
+  #bait2, #hotspot2 { left: var(--x2); top: var(--y2); }
+
+  .bait {
+    pointer-events: none;
+    background: linear-gradient(180deg, #d8ff8c, #a6ef47);
+    color: #0a1402;
+    border: 1px solid rgba(255, 255, 255, .5);
+    box-shadow:
+      0 12px 34px rgba(166, 239, 71, .22),
+      0 2px 0 rgba(255, 255, 255, .35) inset,
+      0 -2px 0 rgba(0, 0, 0, .12) inset;
+    transition: filter .18s, box-shadow .18s;
+  }
+  .bait.alt {
+    background: linear-gradient(180deg, #9bd0ff, #63a9f7);
+    color: #04101f;
+    border-color: rgba(255, 255, 255, .45);
+    box-shadow:
+      0 12px 34px rgba(99, 169, 247, .22),
+      0 2px 0 rgba(255, 255, 255, .4) inset,
+      0 -2px 0 rgba(0, 0, 0, .12) inset;
+  }
+  .bait.hover {
+    filter: brightness(1.09);
+    box-shadow: 0 0 0 4px rgba(255, 255, 255, .16), 0 16px 44px rgba(166, 239, 71, .32);
+  }
+  .bait.alt.hover { box-shadow: 0 0 0 4px rgba(255, 255, 255, .16), 0 16px 44px rgba(99, 169, 247, .34); }
+  .bait.done { filter: saturate(.55) brightness(.82); }
+  .bait.locked { filter: grayscale(.35) brightness(.74); opacity: .82; }
+  .bait.flash { animation: baitFlash .55s ease; }
+  @keyframes baitFlash {
+    0%, 100% { box-shadow: 0 12px 34px rgba(166, 239, 71, .22); }
+    40% { box-shadow: 0 0 0 8px rgba(255, 84, 112, .35), 0 16px 44px rgba(255, 84, 112, .28); }
+  }
+  .bico { font-size: 1.08em; line-height: 1; }
+
+  /* ---------- CAPTCHA hotspots ---------- */
+  .hotspot {
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: transparent;
+    pointer-events: none;
+    cursor: pointer;
+    appearance: none;
+    overflow: visible;
+    z-index: 3;
+  }
+  .hotspot:focus-visible { outline: 2px solid var(--blue); outline-offset: 3px; }
+  .hs-num {
+    flex: 0 0 auto;
+    width: clamp(22px, 2.7cqw, 30px);
+    height: clamp(22px, 2.7cqw, 30px);
+    border-radius: 50%;
+    display: grid;
+    place-items: center;
+    font: 800 clamp(10px, 1.3cqw, 14px)/1 var(--mono);
+    opacity: 0;
+  }
+  .hs-label {
+    position: absolute;
+    left: 50%;
+    bottom: calc(100% + 6px);
+    transform: translateX(-50%);
+    padding: 4px 7px;
+    border-radius: 6px;
+    background: rgba(7, 14, 4, .9);
+    border: 1px solid rgba(188, 255, 87, .28);
+    color: #e6ffc0;
+    font: 700 clamp(8px, 1cqw, 11px)/1 var(--mono);
+    letter-spacing: .02em;
+    white-space: nowrap;
+    opacity: 0;
+    pointer-events: none;
+  }
+  .hs-coord {
+    position: absolute;
+    left: 50%;
+    top: calc(100% + 6px);
+    transform: translateX(-50%);
+    padding: 4px 6px;
+    border-radius: 6px;
+    background: rgba(7, 14, 4, .88);
+    border: 1px solid rgba(188, 255, 87, .24);
+    color: #d6ff9d;
+    font: 700 clamp(7px, .92cqw, 10px)/1 var(--mono);
+    letter-spacing: .02em;
+    white-space: nowrap;
+    opacity: 0;
+    pointer-events: none;
+  }
+  html[data-mode="attack"] .hotspot { pointer-events: auto; }
+  html[data-mode="debug"] .hotspot {
+    pointer-events: auto;
+    cursor: grab;
+    touch-action: none;
+    background: rgba(188, 255, 87, .10);
+    border: 2px dashed rgba(188, 255, 87, .85);
+    color: #eaffc8;
+    box-shadow: 0 0 0 7px rgba(188, 255, 87, .045), 0 16px 40px rgba(0, 0, 0, .4);
+  }
+  html[data-mode="debug"] .hotspot.dragging { cursor: grabbing; background: rgba(188, 255, 87, .18); }
+  html[data-mode="debug"] .hs-num {
+    opacity: 1;
+    background: var(--lime);
+    color: var(--lime-ink);
+    box-shadow: 0 0 18px rgba(188, 255, 87, .4);
+  }
+  html[data-mode="debug"] .hs-label { opacity: 1; }
+  html[data-mode="debug"] .hs-coord { opacity: 1; }
+
+  .stage.xray .hotspot {
+    background: rgba(255, 84, 112, .13);
+    border: 2px solid rgba(255, 84, 112, .95);
+    color: #fff;
+    box-shadow: 0 0 0 7px rgba(255, 84, 112, .10), 0 0 38px rgba(255, 84, 112, .35);
+  }
+  .stage.xray .hotspot .hs-num {
+    opacity: 1;
+    background: var(--red);
+    color: #fff;
+    box-shadow: 0 0 18px rgba(255, 84, 112, .6);
+  }
+  .stage.xray .hotspot .hs-label {
+    opacity: 1;
+    background: rgba(24, 4, 9, .9);
+    border-color: rgba(255, 84, 112, .35);
+    color: #ffc2cc;
+  }
+  .stage.xray .hotspot .hs-coord {
+    opacity: 1;
+    background: rgba(24, 4, 9, .9);
+    border-color: rgba(255, 84, 112, .3);
+    color: #ffb7c3;
+  }
+
+  /* ---------- compact framed-target controls ---------- */
+  .stage.framed .clickbox {
+    width: clamp(40px, 4.6cqw, 44px);
+    height: clamp(40px, 4.6cqw, 44px);
+    border-radius: 50%;
+    gap: 0;
+  }
+  .stage.framed .hs-num {
+    position: absolute;
+    top: -7px;
+    left: -7px;
+    width: 17px;
+    height: 17px;
+    font-size: 9px;
+  }
+  html[data-mode="debug"] .stage.framed .hs-num {
+    box-shadow: 0 0 10px rgba(188, 255, 87, .38);
+  }
+  .stage.xray.framed .hotspot .hs-num {
+    box-shadow: 0 0 10px rgba(255, 84, 112, .55);
+  }
+  .stage.framed .hs-label {
+    bottom: calc(100% + 4px);
+    padding: 3px 5px;
+    font-size: clamp(7px, .92cqw, 9px);
+  }
+  .stage.framed .hs-coord {
+    top: calc(100% + 4px);
+    padding: 3px 4px;
+    font-size: clamp(6.5px, .82cqw, 8.5px);
+  }
+  html[data-mode="debug"] .stage.framed .hotspot {
+    background: rgba(188, 255, 87, .08);
+    box-shadow: 0 0 0 3px rgba(188, 255, 87, .05), 0 8px 20px rgba(0, 0, 0, .35);
+  }
+  html[data-mode="debug"] .stage.framed .hotspot.dragging {
+    background: rgba(188, 255, 87, .16);
+  }
+  .stage.xray.framed .hotspot {
+    box-shadow: 0 0 0 3px rgba(255, 84, 112, .10), 0 0 20px rgba(255, 84, 112, .35);
+  }
+  html[data-mode="debug"] .stage.framed .hotspot::before,
+  html[data-mode="debug"] .stage.framed .hotspot::after,
+  .stage.xray.framed .hotspot::before,
+  .stage.xray.framed .hotspot::after {
+    content: "";
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    border-radius: 1px;
+    background: rgba(234, 255, 200, .92);
+    pointer-events: none;
+  }
+  html[data-mode="debug"] .stage.framed .hotspot::before,
+  .stage.xray.framed .hotspot::before {
+    width: 12px;
+    height: 1px;
+  }
+  html[data-mode="debug"] .stage.framed .hotspot::after,
+  .stage.xray.framed .hotspot::after {
+    width: 1px;
+    height: 12px;
+  }
+  .stage.xray.framed .hotspot::before,
+  .stage.xray.framed .hotspot::after {
+    background: #fff;
+  }
+  .stage.framed .bait {
+    box-shadow:
+      0 6px 18px rgba(166, 239, 71, .2),
+      0 1px 0 rgba(255, 255, 255, .35) inset,
+      0 -1px 0 rgba(0, 0, 0, .12) inset;
+  }
+  .stage.framed .bait.alt {
+    box-shadow:
+      0 6px 18px rgba(99, 169, 247, .2),
+      0 1px 0 rgba(255, 255, 255, .4) inset,
+      0 -1px 0 rgba(0, 0, 0, .12) inset;
+  }
+  .stage.framed .bait .bico {
+    font-size: clamp(18px, 2.6cqw, 23px);
+  }
+  .stage.framed .bait-label {
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 50%;
+    transform: translateX(-50%);
+    max-width: 140px;
+    padding: 2px 4px;
+    border-radius: 4px;
+    background: rgba(7, 14, 4, .78);
+    color: #eaffc8;
+    font: 700 clamp(7px, .9cqw, 9px)/1.15 var(--mono);
+    text-align: center;
+    white-space: nowrap;
+    pointer-events: none;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, .6);
+  }
+  .stage.framed .bait.alt .bait-label {
+    background: rgba(4, 10, 20, .78);
+    color: #cfe7ff;
+  }
+
+  /* ---------- victim bank page ---------- */
+  .victim::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background-image:
+      linear-gradient(rgba(119, 183, 255, .045) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(119, 183, 255, .045) 1px, transparent 1px);
+    background-size: 42px 42px;
+    -webkit-mask-image: radial-gradient(circle at 50% 60%, #000, transparent 78%);
+    mask-image: radial-gradient(circle at 50% 60%, #000, transparent 78%);
+    pointer-events: none;
+  }
+  .bank-top {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 2.7% 4.5%;
+    border-bottom: 1px solid rgba(255, 255, 255, .06);
+    background: rgba(7, 13, 22, .5);
+    z-index: 1;
+  }
+  .bank-brand {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font: 800 clamp(9px, 1.18cqw, 13px)/1 var(--mono);
+    letter-spacing: .14em;
+  }
+  .bank-mark {
+    width: clamp(20px, 2.4cqw, 27px);
+    height: clamp(20px, 2.4cqw, 27px);
+    border-radius: 7px;
+    display: grid;
+    place-items: center;
+    background: linear-gradient(135deg, #77b7ff, #3f7ed8);
+    color: #04101f;
+    font-size: clamp(10px, 1.3cqw, 14px);
+  }
+  .bank-secure { color: #8fa8c6; font: 600 clamp(8px, 1cqw, 11px)/1 var(--mono); }
+  .bank-card {
+    position: absolute;
+    left: 50%;
+    top: 53%;
+    transform: translate(-50%, -50%);
+    width: min(84%, 650px);
+    max-height: 82%;
+    padding: clamp(13px, 2.6cqw, 26px);
+    border-radius: clamp(12px, 1.7cqw, 18px);
+    background: linear-gradient(180deg, rgba(18, 31, 49, .97), rgba(10, 19, 32, .97));
+    border: 1px solid rgba(119, 183, 255, .18);
+    box-shadow: 0 30px 70px rgba(0, 0, 0, .45);
+    z-index: 1;
+  }
+  .bank-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+  .bank-kicker {
+    margin: 0 0 4px;
+    color: #6f8dad;
+    font: 700 clamp(7px, 1cqw, 10px)/1 var(--mono);
+    letter-spacing: .16em;
+  }
+  .bank-head h3 {
+    margin: 0;
+    font-size: clamp(14px, 2.1cqw, 23px);
+    line-height: 1.1;
+    letter-spacing: -.02em;
+  }
+  .bank-amount {
+    font-size: clamp(16px, 2.7cqw, 30px);
+    font-weight: 800;
+    letter-spacing: -.04em;
+    color: #fff;
+    white-space: nowrap;
+  }
+  .bank-amount span { color: #7d93ae; font-size: .6em; }
+  .bank-details {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+    margin-top: clamp(10px, 1.9cqw, 18px);
+    padding-top: clamp(9px, 1.7cqw, 16px);
+    border-top: 1px solid rgba(255, 255, 255, .07);
+  }
+  .bank-details span {
+    display: block;
+    color: #6f8dad;
+    font: 600 clamp(7px, .9cqw, 9px)/1 var(--mono);
+    text-transform: uppercase;
+    letter-spacing: .1em;
+    margin-bottom: 4px;
+  }
+  .bank-details strong { display: block; font-size: clamp(9px, 1.18cqw, 13px); color: #d7e6f8; }
+  .bank-check {
+    margin-top: clamp(10px, 1.9cqw, 18px);
+    border: 1px dashed rgba(119, 183, 255, .26);
+    border-radius: 12px;
+    padding: clamp(9px, 1.7cqw, 16px);
+    background: rgba(119, 183, 255, .035);
+  }
+  .bank-check-head { display: flex; align-items: center; gap: 9px; }
+  .bank-lock { font-size: clamp(14px, 2cqw, 22px); }
+  .bank-check-head strong { display: block; font-size: clamp(9px, 1.22cqw, 13px); }
+  .bank-check-head small {
+    display: block;
+    margin-top: 2px;
+    color: #7f97b4;
+    font-size: clamp(8px, 1.02cqw, 11px);
+  }
+  .bank-check-dots { display: flex; gap: 7px; margin-top: clamp(8px, 1.4cqw, 13px); }
+  .bank-check-dots span {
+    width: clamp(20px, 2.4cqw, 27px);
+    height: clamp(20px, 2.4cqw, 27px);
+    border-radius: 50%;
+    display: grid;
+    place-items: center;
+    border: 1px solid rgba(119, 183, 255, .35);
+    color: #9fc6f5;
+    font: 700 clamp(8px, 1cqw, 11px)/1 var(--mono);
+  }
+  .bank-status {
+    margin-top: clamp(9px, 1.6cqw, 14px);
+    font: 650 clamp(8px, 1.02cqw, 11px)/1.3 var(--mono);
+    letter-spacing: .03em;
+    color: #8aa1ba;
+  }
+  .bank-status.ok { color: #b9f26a; }
+  .bank-disclaimer {
+    margin: clamp(6px, 1.2cqw, 11px) 0 0;
+    color: #536a84;
+    font: 600 clamp(6.5px, .82cqw, 8.5px)/1 var(--mono);
+    letter-spacing: .06em;
+    text-transform: uppercase;
+  }
+
+  /* ---------- debug grid ---------- */
+  .debug-grid {
+    position: absolute;
+    inset: 0;
+    z-index: 3;
+    display: none;
+    pointer-events: none;
+    background-image:
+      linear-gradient(to right, rgba(188, 255, 87, .16) 1px, transparent 1px),
+      linear-gradient(to bottom, rgba(188, 255, 87, .16) 1px, transparent 1px),
+      linear-gradient(to right, rgba(188, 255, 87, .055) 1px, transparent 1px),
+      linear-gradient(to bottom, rgba(188, 255, 87, .055) 1px, transparent 1px);
+    background-size: 10% 10%, 10% 10%, 2% 2%, 2% 2%;
+  }
+  .debug-grid::before,
+  .debug-grid::after { content: ""; position: absolute; background: rgba(188, 255, 87, .28); }
+  .debug-grid::before { left: 50%; top: 0; bottom: 0; width: 1px; }
+  .debug-grid::after { top: 50%; left: 0; right: 0; height: 1px; }
+  html[data-mode="debug"] .debug-grid { display: block; }
+
+  /* ---------- x-ray + proof ---------- */
+  .xray-badge {
+    position: absolute;
+    z-index: 12;
+    top: 12px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: none;
+    align-items: center;
+    gap: 6px;
+    padding: 7px 11px;
+    border-radius: 999px;
+    background: rgba(28, 5, 10, .85);
+    border: 1px solid rgba(255, 84, 112, .4);
+    color: #ffadb9;
+    font: 700 clamp(8px, 1.05cqw, 11px)/1 var(--mono);
+    letter-spacing: .1em;
+    white-space: nowrap;
+    backdrop-filter: blur(8px);
+  }
+  .stage.xray .xray-badge { display: flex; }
+
+  .proof {
+    position: absolute;
+    z-index: 20;
+    left: 50%;
+    bottom: 4%;
+    width: min(610px, 91%);
+    transform: translate(-50%, 18px);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity .3s ease, transform .3s ease;
+    background: rgba(8, 13, 22, .95);
+    backdrop-filter: blur(16px);
+    border: 1px solid rgba(188, 255, 87, .34);
+    border-radius: 16px;
+    padding: clamp(12px, 2cqw, 20px);
+    box-shadow: 0 30px 90px rgba(0, 0, 0, .65), 0 0 48px rgba(188, 255, 87, .07);
+    color: #eaf2ff;
+  }
+  .stage.solved .proof { opacity: 1; transform: translate(-50%, 0); pointer-events: auto; }
+  .proof.peek { opacity: 0 !important; transform: translate(-50%, 30px) !important; pointer-events: none !important; }
+  .proof-kicker {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font: 800 clamp(8px, 1cqw, 10px)/1 var(--mono);
+    letter-spacing: .15em;
+    color: #c8ff7c;
+  }
+  .proof-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--lime); box-shadow: 0 0 10px rgba(188, 255, 87, .8); }
+  .proof h3 { margin: 7px 0 0; font-size: clamp(15px, 2.2cqw, 24px); letter-spacing: -.02em; }
+  .proof-sub { margin: 5px 0 0; color: #a8bad0; font-size: clamp(9px, 1.15cqw, 12.5px); line-height: 1.45; }
+  .proof-grid {
+    display: grid;
+    grid-template-columns: 1.5fr 1fr 1.2fr;
+    gap: clamp(7px, 1.2cqw, 13px);
+    margin-top: clamp(10px, 1.6cqw, 15px);
+    padding-top: clamp(9px, 1.5cqw, 14px);
+    border-top: 1px solid rgba(255, 255, 255, .09);
+  }
+  .proof-grid span {
+    display: block;
+    color: #7388a1;
+    font: 700 clamp(6.5px, .82cqw, 8.5px)/1 var(--mono);
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    margin-bottom: 4px;
+  }
+  .proof-grid strong { font-size: clamp(8px, 1.05cqw, 11.5px); line-height: 1.35; overflow-wrap: anywhere; }
+  .proof-grid code {
+    color: #c8ff7c;
+    font: 700 clamp(8px, 1.05cqw, 11.5px)/1.3 var(--mono);
+    overflow-wrap: anywhere;
+  }
+  .proof-actions { display: flex; gap: 8px; margin-top: clamp(9px, 1.5cqw, 14px); flex-wrap: wrap; }
+  .proof-actions .btn { padding: 8px 11px; font-size: 11px; }
+
+  /* ---------- debug panel ---------- */
+  .debug-panel { max-width: 960px; margin: 18px auto 0; }
+  .debug-panel[hidden] { display: none; }
+  .target-card { margin-bottom: 12px; }
+  .target-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .target-input {
+    flex: 1 1 340px;
+    min-width: 0;
+    background: #08101b;
+    border: 1px solid #22314a;
+    border-radius: 9px;
+    padding: 10px 11px;
+    color: #eaf2ff;
+    font: 600 11.5px/1.4 var(--mono);
+    outline: none;
+  }
+  .target-input:focus { border-color: #3a557c; box-shadow: 0 0 0 3px rgba(119, 183, 255, .1); }
+  .target-input::placeholder { color: #546981; }
+  .target-status {
+    margin-top: 9px;
+    color: #7d91aa;
+    font: 600 10px/1.5 var(--mono);
+    overflow-wrap: anywhere;
+  }
+  .target-status.error { color: #ff9aaa; }
+  .target-status strong { color: #c8ff7c; }
+  .panel-grid { display: grid; grid-template-columns: 1fr 1fr 1.45fr; gap: 12px; }
+  .card {
+    background: rgba(13, 20, 33, .86);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 14px;
+    min-width: 0;
+  }
+  .card-head {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    font: 750 11px/1 var(--mono);
+    letter-spacing: .07em;
+    text-transform: uppercase;
+    color: #c7d5e8;
+    margin-bottom: 11px;
+  }
+  .dot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; }
+  .dot.lime { background: var(--lime); box-shadow: 0 0 8px rgba(188, 255, 87, .55); }
+  .dot.blue { background: var(--blue); box-shadow: 0 0 8px rgba(119, 183, 255, .55); }
+  .fields { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .field {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    background: #08101b;
+    border: 1px solid #22314a;
+    border-radius: 9px;
+    padding: 7px 8px;
+    cursor: text;
+  }
+  .field:focus-within { border-color: #3a557c; box-shadow: 0 0 0 3px rgba(119, 183, 255, .1); }
+  .field span { color: #6f86a2; font: 700 10px/1 var(--mono); }
+  .field input {
+    width: 100%;
+    min-width: 0;
+    background: transparent;
+    border: 0;
+    outline: 0;
+    color: #eaf2ff;
+    font: 700 12.5px/1 var(--mono);
+    padding: 2px 0;
+  }
+  input[type=number]::-webkit-outer-spin-button,
+  input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+  input[type=number] { -moz-appearance: textfield; appearance: textfield; }
+  .pxline { margin-top: 8px; color: #7d91aa; font: 600 10px/1.4 var(--mono); }
+  .kbd-hint { margin-top: 7px; color: #5f748e; font-size: 10px; line-height: 1.45; }
+  .hint { margin: 0 0 9px; color: #8ba0ba; font-size: 11.5px; line-height: 1.45; }
+  .hint code { color: #c8ff7c; font-family: var(--mono); }
+  .link-out {
+    display: block;
+    width: 100%;
+    min-height: 56px;
+    resize: none;
+    background: #08101b;
+    border: 1px solid #22314a;
+    border-radius: 9px;
+    padding: 9px 10px;
+    color: #b9dcff;
+    font: 500 10.5px/1.45 var(--mono);
+    outline: none;
+    white-space: pre-wrap;
+    word-break: break-all;
+  }
+  .link-out:focus { border-color: #3a557c; box-shadow: 0 0 0 3px rgba(119, 183, 255, .1); }
+  .btn-row { display: flex; gap: 7px; margin-top: 9px; flex-wrap: wrap; }
+  .panel-foot {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    flex-wrap: wrap;
+    margin-top: 12px;
+    padding: 0 2px;
+  }
+  .snap-label { display: flex; align-items: center; gap: 7px; color: #8ba0ba; font-size: 11px; }
+  .snap-label select {
+    background: #0b1421;
+    color: #dbe8f8;
+    border: 1px solid #22314a;
+    border-radius: 8px;
+    padding: 6px 8px;
+    font: 650 11px/1 var(--mono);
+    outline: none;
+  }
+  .align-read { color: #8ba0ba; font-size: 11px; }
+  .align-read b { color: var(--lime); font-family: var(--mono); font-size: 11px; margin-left: 4px; }
+  .align-read b[data-ok="0"] { color: var(--red); }
+  .panel-foot .btn { margin-left: auto; }
+
+  /* ---------- about / toast ---------- */
+  .about {
+    max-width: 960px;
+    margin: 22px auto 0;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: rgba(10, 17, 28, .7);
+    padding: 0 16px;
+  }
+  .about summary {
+    cursor: pointer;
+    padding: 13px 0;
+    font: 700 11.5px/1 var(--mono);
+    letter-spacing: .06em;
+    color: #9db1c9;
+    list-style: none;
+  }
+  .about summary::-webkit-details-marker { display: none; }
+  .about summary::before { content: "▸ "; color: var(--lime); }
+  .about[open] summary::before { content: "▾ "; }
+  .about-body { padding: 0 0 16px; color: #93a7bf; font-size: 12px; line-height: 1.65; }
+  .about-body p { margin: 0 0 9px; }
+  .about-body strong { color: #dbe8f8; }
+  .about-body code { color: #c8ff7c; font-family: var(--mono); font-size: 11px; }
+  .about-body ul { margin: 4px 0 10px; padding-left: 18px; }
+  .about-body li { margin-bottom: 4px; }
+  .about-body .fine { color: #627893; font-size: 10.5px; }
+
+  .toast {
+    position: fixed;
+    left: 50%;
+    bottom: 26px;
+    transform: translate(-50%, 14px);
+    z-index: 100;
+    opacity: 0;
+    pointer-events: none;
+    background: #121d2c;
+    border: 1px solid #2c405c;
+    color: #eaf2ff;
+    border-radius: 10px;
+    padding: 10px 14px;
+    font: 650 12px/1.2 var(--sans);
+    box-shadow: 0 18px 50px rgba(0, 0, 0, .5);
+    transition: opacity .2s, transform .2s;
+    max-width: calc(100vw - 32px);
+    text-align: center;
+  }
+  .toast.show { opacity: 1; transform: translate(-50%, 0); }
+
+  @media (max-width: 860px) {
+    .panel-grid { grid-template-columns: 1fr 1fr; }
+    .link-card { grid-column: 1 / -1; }
+  }
+  @media (max-width: 620px) {
+    .topbar { padding: 14px 14px 10px; gap: 9px; }
+    .wrap { padding: 0 14px 40px; }
+    .brand-copy strong { font-size: 13px; }
+    .panel-grid { grid-template-columns: 1fr; }
+    .link-card { grid-column: auto; }
+    .proof-grid { grid-template-columns: 1fr 1fr; }
+    .proof-grid > div:first-child { grid-column: 1 / -1; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      transition-duration: .001ms !important;
+      animation-duration: .001ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+</style>
+</head>
+<body>
+<div class="ethics">Authorized security testing POC · Built-in demo is simulated · Framed targets load only the URL you enter</div>
+
+<header class="topbar">
+  <div class="brand">
+    <div class="brand-mark" aria-hidden="true">◎</div>
+    <div class="brand-copy">
+      <strong>2-Click CAPTCHA Clickjacking</strong>
+      <span>Position lab / attack preview</span>
+    </div>
+  </div>
+  <span class="mode-pill" id="modePill">MODE</span>
+  <div class="top-actions debug-only">
+    <button class="btn ghost" id="copyTop" type="button">Copy link</button>
+    <button class="btn primary" id="openTop" type="button">Open attack ↗</button>
+  </div>
+  <div class="top-actions attack-only">
+    <button class="btn ghost" id="xrayBtn" type="button">POC: reveal hidden layer</button>
+    <button class="btn ghost" id="restartBtn" type="button">Restart</button>
+  </div>
+</header>
+
+<main class="wrap">
+  <section class="stage-shell" aria-label="Two-click CAPTCHA clickjacking demo">
+    <div class="stage" id="stage">
+
+      <!-- ================= ATTACKER PAGE ================= -->
+      <div class="layer attacker" id="attackerLayer">
+        <div class="attacker-bg" aria-hidden="true"></div>
+        <div class="attacker-top">
+          <div class="attacker-brand"><span class="gbadge" aria-hidden="true">🎁</span> GIFTCARD REWARDS</div>
+          <div class="attacker-steps" aria-hidden="true">
+            <span class="sdot on" id="sd1"></span>
+            <span class="sdot" id="sd2"></span>
+            <span class="steptext" id="attackerStep">STEP 1 OF 2</span>
+          </div>
+        </div>
+        <div class="attacker-copy">
+          <p class="eyebrow">FINAL STEP</p>
+          <h2>You've won a <span>$500</span> gift card</h2>
+          <p id="attackerMsg">Tap both buttons below to claim your reward.</p>
+        </div>
+        <div class="attacker-gift" aria-hidden="true">🎁</div>
+
+        <div class="clickbox bait" id="bait1">
+          <span class="bico" aria-hidden="true">🎁</span><span class="bait-label">Claim $500</span>
+        </div>
+        <div class="clickbox bait alt locked" id="bait2">
+          <span class="bico" aria-hidden="true">✅</span><span class="bait-label">Confirm &amp; claim</span>
+        </div>
+
+        <div class="attacker-foot">No purchase necessary · Demo reward</div>
+      </div>
+
+      <!-- ================= VICTIM PAGE ================= -->
+      <div class="layer victim" id="victimLayer">
+        <div class="bank-top">
+          <div class="bank-brand"><span class="bank-mark" aria-hidden="true">A</span> ACME BANK</div>
+          <div class="bank-secure">🔒 Secure session</div>
+        </div>
+
+        <div class="bank-card">
+          <div class="bank-head">
+            <div>
+              <p class="bank-kicker">TRANSFER APPROVAL</p>
+              <h3>Confirm your transfer</h3>
+            </div>
+            <div class="bank-amount">$4,999<span>.00</span></div>
+          </div>
+
+          <div class="bank-details">
+            <div><span>To</span><strong>ACCT •••• 4417</strong></div>
+            <div><span>Memo</span><strong>INV-8841</strong></div>
+            <div><span>Fee</span><strong>$0.00</strong></div>
+          </div>
+
+          <div class="bank-check">
+            <div class="bank-check-head">
+              <span class="bank-lock" aria-hidden="true">🔐</span>
+              <div>
+                <strong>Two-step verification</strong>
+                <small>Tap security point 1, then point 2</small>
+              </div>
+            </div>
+            <div class="bank-check-dots" aria-hidden="true"><span>1</span><span>2</span></div>
+          </div>
+
+          <div class="bank-status" id="bankStatus">Awaiting verification</div>
+          <p class="bank-disclaimer">Simulated bank page — POC only</p>
+        </div>
+      </div>
+
+      <!-- ================= FRAMED TARGET ================= -->
+      <div class="frame-layer" id="frameLayer" hidden>
+        <iframe id="targetFrame" title="Framed target page" referrerpolicy="no-referrer"></iframe>
+      </div>
+
+      <div class="debug-grid" aria-hidden="true"></div>
+
+      <div class="marker-layer" id="markerLayer">
+        <button class="clickbox hotspot" id="hotspot1" type="button" aria-label="CAPTCHA verification point 1">
+          <span class="hs-num" aria-hidden="true">1</span>
+          <span class="hs-label">Click point 1</span>
+          <span class="hs-coord" id="coord1">—</span>
+        </button>
+        <button class="clickbox hotspot" id="hotspot2" type="button" aria-label="CAPTCHA verification point 2">
+          <span class="hs-num" aria-hidden="true">2</span>
+          <span class="hs-label">Click point 2</span>
+          <span class="hs-coord" id="coord2">—</span>
+        </button>
+      </div>
+
+      <div class="xray-badge" id="xrayBadge" aria-hidden="true">● X-RAY · hidden bank page revealed</div>
+
+      <div class="proof" id="proof" aria-hidden="true">
+        <div class="proof-kicker"><span class="proof-dot"></span> POC PROOF</div>
+        <h3 id="proofTitle">Clickjacking successful</h3>
+        <p class="proof-sub" id="proofSub">Two clicks meant for the reward page solved the bank's CAPTCHA and authorized the transfer.</p>
+        <div class="proof-grid">
+          <div><span id="proofActionLabel">Real action</span><strong id="proofAction">Transfer $4,999.00 to ACCT •••• 4417</strong></div>
+          <div><span>Alignment error</span><code id="proofErr">—</code></div>
+          <div><span>Positions (x%, y%)</span><code id="proofPos">—</code></div>
+        </div>
+        <div class="proof-actions">
+          <button class="btn primary" id="proofXray" type="button">Reveal hidden layer</button>
+          <button class="btn ghost" id="proofReplay" type="button">Replay</button>
+        </div>
+      </div>
+    </div>
+
+    <p class="stage-caption" id="stageCaption"></p>
+  </section>
+
+  <!-- ================= DEBUG CONTROLS ================= -->
+  <section class="debug-panel" id="debugPanel" hidden aria-label="Position controls">
+    <div class="card target-card">
+      <div class="card-head"><span class="dot blue"></span> Framed target (optional)</div>
+      <div class="target-row">
+        <input class="target-input" id="targetUrlInput" type="text" inputmode="url" spellcheck="false" autocomplete="off" placeholder="https://target.example/captcha  or  ./target.html">
+        <button class="btn primary" id="loadTargetBtn" type="button">Load</button>
+        <button class="btn ghost" id="reloadTargetBtn" type="button">Reload frame</button>
+        <button class="btn ghost" id="clearTargetBtn" type="button">Use built-in demo</button>
+      </div>
+      <div class="target-status" id="targetStatus" aria-live="polite">No iframe — using the built-in simulated bank page.</div>
+    </div>
+
+    <div class="panel-grid">
+      <div class="card">
+        <div class="card-head"><span class="dot lime"></span> Click target 1</div>
+        <div class="fields">
+          <label class="field"><span>X</span><input id="x1" type="number" step="0.1" min="0" max="100" inputmode="decimal" aria-label="Target 1 X percent"><span>%</span></label>
+          <label class="field"><span>Y</span><input id="y1" type="number" step="0.1" min="0" max="100" inputmode="decimal" aria-label="Target 1 Y percent"><span>%</span></label>
+        </div>
+        <div class="pxline" id="px1">—</div>
+        <div class="kbd-hint">Drag, or focus a point and use arrow keys. Shift = 1%, Alt = 0.05%.</div>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><span class="dot lime"></span> Click target 2</div>
+        <div class="fields">
+          <label class="field"><span>X</span><input id="x2" type="number" step="0.1" min="0" max="100" inputmode="decimal" aria-label="Target 2 X percent"><span>%</span></label>
+          <label class="field"><span>Y</span><input id="y2" type="number" step="0.1" min="0" max="100" inputmode="decimal" aria-label="Target 2 Y percent"><span>%</span></label>
+        </div>
+        <div class="pxline" id="px2">—</div>
+        <div class="kbd-hint">Positions are stored as percentages, so the attack link survives resizing.</div>
+      </div>
+
+      <div class="card link-card">
+        <div class="card-head"><span class="dot blue"></span> Generated attack link</div>
+        <p class="hint">No <code>debug</code> flag. This is the URL you send to the target. A framed target is carried in the same link as encoded <code>u=</code>.</p>
+        <textarea class="link-out" id="linkOut" readonly rows="2" spellcheck="false" aria-label="Generated attack link"></textarea>
+        <div class="btn-row">
+          <button class="btn primary" id="copyBtn" type="button">Copy link</button>
+          <button class="btn" id="openBtn" type="button">Open ↗</button>
+          <button class="btn ghost" id="goBtn" type="button">Go</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel-foot">
+      <label class="snap-label">Grid snap
+        <select id="snap">
+          <option value="0">Off</option>
+          <option value="0.5">0.5%</option>
+          <option value="1">1%</option>
+          <option value="5">5%</option>
+        </select>
+      </label>
+      <span class="align-read">Bait ↔ target alignment <b id="alignVal" data-ok="1">0.000 px</b></span>
+      <button class="btn ghost" id="resetBtn" type="button">Reset positions</button>
+    </div>
+  </section>
+
+  <details class="about">
+    <summary>About this POC · impact and mitigations</summary>
+    <div class="about-body">
+      <p><strong>Impact shown:</strong> a victim who thinks they are tapping two reward buttons is actually tapping the two verification points of a bank transfer. In the built-in simulation, because the coordinates are supplied in the URL as percentages, the invisible CAPTCHA targets and the visible bait stay perfectly aligned on any screen size.</p>
+      <p><strong>Debug mode</strong> (<code>?debug</code>) is the attacker's setup step. Drag the two click targets, or paste a URL to frame a real target page and drag the markers onto its real controls. The generated link contains the two coordinate pairs plus the optional encoded <code>u=</code> target — no <code>debug</code> flag and no UI hints.</p>
+      <p><strong>Framed targets:</strong> the attack link positions a transparent iframe exactly over the bait so real clicks reach the framed page. With a framed target the overlay collapses to compact icon-sized controls so it can sit on small target elements. Same-origin targets expose click progress to this POC; cross-origin targets receive the clicks but cannot be observed by the attacker page, so no proof is shown for them. Positions are percentages of the stage, so the overlay scales with the frame; a target whose controls reflow differently at another viewport may need fresh coordinates for that viewport. Targets that send <code>X-Frame-Options</code> / <code>frame-ancestors</code> or frame-bust will refuse to load or escape the frame.</p>
+      <p><strong>Real-world requirements:</strong> the victim page must be frameable (no <code>X-Frame-Options</code> / CSP <code>frame-ancestors</code>), the CAPTCHA controls must be positionable or predictable, and the sensitive action must be reachable with two clicks. The built-in simulation demonstrates all three offline; framing a URL requires network access to that URL.</p>
+      <p><strong>Mitigations:</strong></p>
+      <ul>
+        <li>Send <code>X-Frame-Options: DENY</code> and <code>Content-Security-Policy: frame-ancestors 'none'</code>.</li>
+        <li>Do not accept layout or CAPTCHA coordinates from URL parameters; derive them server-side.</li>
+        <li>Validate the CAPTCHA token server-side and make it single-use.</li>
+        <li>Require a deliberate, visible confirmation for sensitive actions; never authorize on two blind clicks.</li>
+        <li>Use frame-busting as defence in depth, not as the only control.</li>
+      </ul>
+      <p class="fine">Built-in pages are simulated. Framing a URL loads only the URL you enter. No real bank, no data collection. For authorized security testing and awareness demonstrations.</p>
+    </div>
+  </details>
+</main>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script>
+(() => {
+  'use strict';
+
+  const $ = (selector, root = document) => root.querySelector(selector);
+  const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
+  const round3 = (value) => Math.round(value * 1000) / 1000;
+  const fmt = (value) => String(round3(value));
+
+  const stage = $('#stage');
+  const victimLayer = $('#victimLayer');
+  const frameLayer = $('#frameLayer');
+  const targetFrame = $('#targetFrame');
+  const markerLayer = $('#markerLayer');
+  const hotspot1 = $('#hotspot1');
+  const hotspot2 = $('#hotspot2');
+  const bait1 = $('#bait1');
+  const bait2 = $('#bait2');
+  const coord1 = $('#coord1');
+  const coord2 = $('#coord2');
+  const attackerMsg = $('#attackerMsg');
+  const attackerStep = $('#attackerStep');
+  const sd1 = $('#sd1');
+  const sd2 = $('#sd2');
+  const bankStatus = $('#bankStatus');
+  const proof = $('#proof');
+  const proofTitle = $('#proofTitle');
+  const proofSub = $('#proofSub');
+  const proofAction = $('#proofAction');
+  const proofActionLabel = $('#proofActionLabel');
+  const proofErr = $('#proofErr');
+  const proofPos = $('#proofPos');
+  const xrayBtn = $('#xrayBtn');
+  const proofXray = $('#proofXray');
+  const attackLayer = $('#attackerLayer');
+  const toastEl = $('#toast');
+  const debugPanel = $('#debugPanel');
+  const linkOut = $('#linkOut');
+  const alignVal = $('#alignVal');
+  const snapSel = $('#snap');
+  const stageCaption = $('#stageCaption');
+  const modePill = $('#modePill');
+  const xrayBadge = $('#xrayBadge');
+  const targetUrlInput = $('#targetUrlInput');
+  const targetStatus = $('#targetStatus');
+
+  const inputs = {
+    x1: $('#x1'),
+    y1: $('#y1'),
+    x2: $('#x2'),
+    y2: $('#y2'),
+  };
+  const px1 = $('#px1');
+  const px2 = $('#px2');
+
+  const params = new URLSearchParams(location.search);
+  const isDebug = params.has('debug');
+  const DEFAULTS = { p1: { x: 30, y: 55 }, p2: { x: 70, y: 67 } };
+
+  function parsePair(raw) {
+    if (raw == null) return null;
+    const parts = String(raw).trim().split(',');
+    if (parts.length !== 2) return null;
+    if (parts.some((part) => part.trim() === '')) return null;
+    const x = Number(parts[0]);
+    const y = Number(parts[1]);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+    return { x: clamp(x, 0, 100), y: clamp(y, 0, 100) };
+  }
+
+  function readPositions() {
+    let p1 = parsePair(params.get('p1'));
+    let p2 = parsePair(params.get('p2'));
+    if (!p1 || !p2) {
+      const rawKeys = [...params.keys()].filter((key) => key.includes(','));
+      if (!p1 && rawKeys[0]) p1 = parsePair(rawKeys[0]);
+      if (!p2 && rawKeys[1]) p2 = parsePair(rawKeys[1]);
+    }
+    return {
+      p1: p1 || { ...DEFAULTS.p1 },
+      p2: p2 || { ...DEFAULTS.p2 },
+    };
+  }
+
+  function normalizeTarget(raw) {
+    const text = String(raw || '').trim();
+    if (!text) return { url: '', error: '' };
+
+    let candidate = text;
+    const explicitScheme = /^[a-z][a-z0-9+.-]*:/i.test(candidate);
+    const hostPort = /^[^\s/:]+:\d+(?:[/?#]|$)/.test(candidate);
+    const explicitRelative = candidate.startsWith('/') || candidate.startsWith('./') || candidate.startsWith('../');
+    const bareFile = /^[^/\s?#]+\.(?:html?|xhtml|php|asp|aspx|jsp|md|txt|json)(?:[?#].*)?$/i.test(candidate);
+    const firstSegment = candidate.split(/[/?#]/)[0];
+    const firstLooksHost = firstSegment.includes('.') || /^(?:localhost|\[::1\])$/i.test(firstSegment);
+    const looksRelativePath = candidate.includes('/') && !firstLooksHost && !hostPort;
+
+    if ((!explicitScheme || hostPort) && !explicitRelative && !bareFile && !looksRelativePath) {
+      candidate = `https://${candidate}`;
+    }
+
+    let parsed;
+    try {
+      parsed = new URL(candidate, location.href);
+    } catch (error) {
+      return { url: '', error: 'That target URL could not be parsed.' };
+    }
+
+    if (!['http:', 'https:', 'file:'].includes(parsed.protocol)) {
+      return { url: '', error: 'Only http(s), file, and relative target URLs are allowed.' };
+    }
+    return { url: parsed.href, error: '' };
+  }
+
+  const initial = readPositions();
+  const rawTarget = params.get('u') || params.get('url') || '';
+  const normalizedTarget = normalizeTarget(rawTarget);
+  const state = {
+    p1: { ...initial.p1 },
+    p2: { ...initial.p2 },
+    step: 0,
+    solved: false,
+    drag: null,
+    targetUrl: normalizedTarget.url,
+    targetError: rawTarget && normalizedTarget.error ? normalizedTarget.error : '',
+    frameObservable: null,
+    frameClicks: 0,
+  };
+
+  /* ---------------- mode setup ---------------- */
+  debugPanel.hidden = !isDebug;
+  victimLayer.setAttribute('aria-hidden', String(!isDebug));
+  markerLayer.setAttribute('aria-hidden', String(!isDebug));
+  attackLayer.setAttribute('aria-hidden', String(isDebug));
+
+  if (isDebug) {
+    targetUrlInput.value = rawTarget ? (normalizedTarget.url || rawTarget) : '';
+  } else {
+    hotspot1.tabIndex = -1;
+    hotspot2.tabIndex = -1;
+  }
+
+  function updateTargetStatus() {
+    if (!isDebug) return;
+    targetStatus.classList.toggle('error', Boolean(state.targetError));
+    if (state.targetError) {
+      targetStatus.textContent = state.targetError;
+      targetStatus.title = '';
+      return;
+    }
+    if (!state.targetUrl) {
+      targetStatus.textContent = 'No iframe — using the built-in simulated bank page.';
+      targetStatus.title = '';
+      return;
+    }
+    const observability = state.frameObservable === true
+      ? 'Same-origin: the attacker page can observe clicks in the frame.'
+      : state.frameObservable === false
+        ? 'Cross-origin / isolated: clicks are delivered but cannot be observed.'
+        : 'Checking frame observability…';
+    const fileNote = location.protocol === 'file:' && state.targetUrl.startsWith('file:')
+      ? ' Browsers often isolate file:// pages; serve over HTTP for same-origin observation.'
+      : '';
+    targetStatus.textContent = `Framed: ${state.targetUrl} — ${observability} A blank frame usually means X-Frame-Options / CSP blocked embedding.${fileNote}`;
+    targetStatus.title = state.targetUrl;
+  }
+
+  function updateCaption() {
+    if (isDebug) {
+      stageCaption.innerHTML = state.targetUrl
+        ? 'Framed target loaded. Drag the <b>compact target rings</b> onto the real controls inside the iframe. The generated link reproduces the target URL and both centers.'
+        : 'Drag <b>point 1</b> and <b>point 2</b> to the spots you want. The generated link reproduces both centers exactly, with no debug UI.';
+      return;
+    }
+
+    if (!state.targetUrl) {
+      stageCaption.innerHTML = 'What the victim sees. Use <b>POC: reveal hidden layer</b> to inspect the bank page and the two real click targets beneath the bait.';
+      return;
+    }
+
+    if (state.frameObservable === true) {
+      stageCaption.innerHTML = 'Framed target mode. The transparent iframe receives the real clicks, and this <b>same-origin</b> frame lets the attacker page observe them.';
+    } else if (state.frameObservable === false) {
+      stageCaption.innerHTML = 'Framed target mode. The transparent iframe receives the real clicks. <b>Cross-origin or isolated</b> clicks cannot be observed by the attacker page — use reveal to inspect the framed page.';
+    } else {
+      stageCaption.innerHTML = 'Framed target mode. The transparent iframe receives the real clicks. Checking whether the target is same-origin and observable…';
+    }
+  }
+
+  function updateChrome() {
+    const framed = Boolean(state.targetUrl);
+    modePill.textContent = isDebug ? (framed ? 'DEBUG · FRAME' : 'DEBUG') : (framed ? 'ATTACK · FRAME' : 'ATTACK');
+    document.title = isDebug
+      ? (framed ? 'Debug (framed) — 2-Click CAPTCHA Clickjacking POC' : 'Debug — 2-Click CAPTCHA Clickjacking POC')
+      : 'GiftCard Rewards — Claim your $500';
+    xrayBadge.textContent = framed ? '● X-RAY · hidden framed target revealed' : '● X-RAY · hidden bank page revealed';
+    updateTargetStatus();
+    updateCaption();
+  }
+
+  let frameProbeTimer = 0;
+
+  function applyFramedState({ reload = false } = {}) {
+    const framed = Boolean(state.targetUrl);
+    stage.classList.toggle('framed', framed);
+    victimLayer.hidden = framed;
+    frameLayer.hidden = !framed;
+    targetFrame.tabIndex = isDebug ? 0 : -1;
+
+    if (framed) {
+      attackerMsg.textContent = 'Tap the gift, then the check, to claim your reward.';
+      if (reload) {
+        targetFrame.src = 'about:blank';
+        const wanted = state.targetUrl;
+        setTimeout(() => {
+          if (state.targetUrl === wanted) targetFrame.src = wanted;
+        }, 40);
+      } else if (targetFrame.src !== state.targetUrl) {
+        targetFrame.src = state.targetUrl;
+      }
+      scheduleFrameProbe();
+    } else {
+      clearTimeout(frameProbeTimer);
+      targetFrame.src = 'about:blank';
+      state.frameObservable = null;
+      state.frameClicks = 0;
+    }
+
+    updateChrome();
+  }
+
+  function scheduleFrameProbe() {
+    clearTimeout(frameProbeTimer);
+    frameProbeTimer = setTimeout(() => {
+      if (!state.targetUrl || state.frameObservable !== null) return;
+      state.frameObservable = false;
+      updateChrome();
+    }, 4000);
+  }
+
+  function resetFramedUI() {
+    state.step = 0;
+    state.solved = false;
+    stage.classList.remove('solved');
+    proof.setAttribute('aria-hidden', 'true');
+    hotspot1.disabled = false;
+    hotspot2.disabled = false;
+    hotspot1.style.pointerEvents = '';
+    hotspot2.style.pointerEvents = '';
+    bait1.classList.remove('done');
+    bait1.querySelector('.bait-label').textContent = 'Claim $500';
+    bait2.classList.remove('done');
+    bait2.classList.add('locked');
+    bait2.querySelector('.bait-label').textContent = 'Confirm & claim';
+    bankStatus.textContent = 'Awaiting verification';
+    bankStatus.classList.remove('ok');
+    attackerMsg.textContent = state.targetUrl
+      ? 'Tap the gift, then the check, to claim your reward.'
+      : 'Tap both buttons below to claim your reward.';
+    setStepUI();
+  }
+
+  function handleFrameClick() {
+    if (isDebug || !state.targetUrl || state.solved) return;
+    state.frameClicks += 1;
+
+    if (state.frameClicks === 1) {
+      state.step = 1;
+      bait1.classList.add('done');
+      bait1.querySelector('.bait-label').textContent = 'Verified';
+      bait2.classList.remove('locked');
+      attackerMsg.textContent = 'Step 1 verified. One more tap to release your reward.';
+      setStepUI();
+      showToast('Click 1 observed in the framed target');
+      return;
+    }
+
+    state.step = 2;
+    state.solved = true;
+    bait2.classList.add('done');
+    bait2.querySelector('.bait-label').textContent = 'Claimed';
+    attackerMsg.textContent = 'Reward approved — thank you!';
+    setStepUI();
+
+    stage.classList.add('solved');
+    proof.setAttribute('aria-hidden', 'false');
+    const max = Math.max(centerDelta(hotspot1, bait1), centerDelta(hotspot2, bait2));
+    proofErr.textContent = `${max.toFixed(3)} px`;
+    proofPos.textContent = `${fmt(state.p1.x)}%, ${fmt(state.p1.y)}% → ${fmt(state.p2.x)}%, ${fmt(state.p2.y)}%`;
+    proofTitle.textContent = 'Two framed clicks observed';
+    proofSub.textContent = 'The attacker page counted two clicks inside the same-origin framed target. The framed page received both clicks.';
+    proofActionLabel.textContent = 'Delivered to';
+    proofAction.textContent = state.targetUrl;
+    showToast('2 clicks observed in the framed target');
+  }
+
+  function onFrameLoad() {
+    if (!state.targetUrl || targetFrame.src === 'about:blank') return;
+    clearTimeout(frameProbeTimer);
+
+    let doc = null;
+    try {
+      doc = targetFrame.contentDocument;
+    } catch (error) {
+      doc = null;
+    }
+    state.frameObservable = Boolean(doc && doc.documentElement);
+
+    if (!isDebug) {
+      if (!state.solved) {
+        state.frameClicks = 0;
+        resetFramedUI();
+      }
+      if (doc) doc.addEventListener('click', handleFrameClick, true);
+    }
+
+    updateChrome();
+  }
+
+  function loadTargetFromInput() {
+    const raw = targetUrlInput.value.trim();
+    if (!raw) {
+      useBuiltInDemo();
+      return;
+    }
+    const result = normalizeTarget(raw);
+    if (!result.url) {
+      state.targetError = result.error;
+      updateTargetStatus();
+      showToast(result.error);
+      return;
+    }
+
+    state.targetError = '';
+    state.targetUrl = result.url;
+    state.frameObservable = null;
+    state.frameClicks = 0;
+    targetUrlInput.value = result.url;
+    applyFramedState();
+    applyPositions();
+    persistDebugUrl();
+    showToast('Framed target loaded');
+  }
+
+  function useBuiltInDemo() {
+    state.targetUrl = '';
+    state.targetError = '';
+    state.frameObservable = null;
+    state.frameClicks = 0;
+    targetUrlInput.value = '';
+    applyFramedState();
+    applyPositions();
+    persistDebugUrl();
+    showToast('Using the built-in simulated page');
+  }
+
+  function reloadTarget() {
+    if (!state.targetUrl) {
+      showToast('Load a target URL first');
+      return;
+    }
+    state.frameObservable = null;
+    state.frameClicks = 0;
+    applyFramedState({ reload: true });
+    showToast('Reloading framed target');
+  }
+
+  updateChrome();
+
+  /* ---------------- positions ---------------- */
+  function baseUrl() {
+    return location.href.split('#')[0].split('?')[0];
+  }
+
+  function attackUrl() {
+    const parts = [];
+    if (state.targetUrl) parts.push(`u=${encodeURIComponent(state.targetUrl)}`);
+    parts.push(`${fmt(state.p1.x)},${fmt(state.p1.y)}`);
+    parts.push(`${fmt(state.p2.x)},${fmt(state.p2.y)}`);
+    return `${baseUrl()}?${parts.join('&')}`;
+  }
+
+  function syncInputs() {
+    const pairs = [
+      [inputs.x1, state.p1.x],
+      [inputs.y1, state.p1.y],
+      [inputs.x2, state.p2.x],
+      [inputs.y2, state.p2.y],
+    ];
+    for (const [input, value] of pairs) {
+      if (document.activeElement !== input) input.value = fmt(value);
+    }
+  }
+
+  function updatePx() {
+    const read = (point) => `center ≈ ${Math.round((stage.clientWidth * point.x) / 100)}px, ${Math.round((stage.clientHeight * point.y) / 100)}px from top-left`;
+    px1.textContent = read(state.p1);
+    px2.textContent = read(state.p2);
+  }
+
+  function centerDelta(a, b) {
+    const ra = a.getBoundingClientRect();
+    const rb = b.getBoundingClientRect();
+    const dx = ra.left + ra.width / 2 - (rb.left + rb.width / 2);
+    const dy = ra.top + ra.height / 2 - (rb.top + rb.height / 2);
+    return Math.hypot(dx, dy);
+  }
+
+  let alignRaf = 0;
+  function scheduleAlign() {
+    cancelAnimationFrame(alignRaf);
+    alignRaf = requestAnimationFrame(() => {
+      const max = Math.max(centerDelta(hotspot1, bait1), centerDelta(hotspot2, bait2));
+      alignVal.textContent = `${max.toFixed(3)} px`;
+      alignVal.dataset.ok = max < 0.01 ? '1' : '0';
+    });
+  }
+
+  function applyPositions({ inputs: updateInputs = true } = {}) {
+    stage.style.setProperty('--x1', `${fmt(state.p1.x)}%`);
+    stage.style.setProperty('--y1', `${fmt(state.p1.y)}%`);
+    stage.style.setProperty('--x2', `${fmt(state.p2.x)}%`);
+    stage.style.setProperty('--y2', `${fmt(state.p2.y)}%`);
+
+    coord1.textContent = `${fmt(state.p1.x)}% · ${fmt(state.p1.y)}%`;
+    coord2.textContent = `${fmt(state.p2.x)}% · ${fmt(state.p2.y)}%`;
+
+    if (!isDebug) return;
+    if (updateInputs) syncInputs();
+    updatePx();
+    linkOut.value = attackUrl();
+    scheduleAlign();
+  }
+
+  let persistTimer = 0;
+  function persistDebugUrl() {
+    if (!isDebug) return;
+    clearTimeout(persistTimer);
+    persistTimer = setTimeout(() => {
+      const parts = ['debug'];
+      if (state.targetUrl) parts.push(`u=${encodeURIComponent(state.targetUrl)}`);
+      parts.push(`${fmt(state.p1.x)},${fmt(state.p1.y)}`);
+      parts.push(`${fmt(state.p2.x)},${fmt(state.p2.y)}`);
+      try {
+        history.replaceState(null, '', `?${parts.join('&')}`);
+      } catch (error) {
+        /* some file:// contexts refuse history updates */
+      }
+    }, 150);
+  }
+
+  function boundsFor(element) {
+    const stageRect = stage.getBoundingClientRect();
+    const elementRect = element.getBoundingClientRect();
+    const areaW = stage.clientWidth || stageRect.width;
+    const areaH = stage.clientHeight || stageRect.height;
+    const marginX = areaW ? (elementRect.width / 2 / areaW) * 100 : 0;
+    const marginY = areaH ? (elementRect.height / 2 / areaH) * 100 : 0;
+    const minX = marginX + 0.25;
+    const maxX = 100 - marginX - 0.25;
+    const minY = marginY + 0.25;
+    const maxY = 100 - marginY - 0.25;
+    return {
+      minX: Math.min(minX, maxX),
+      maxX: Math.max(minX, maxX),
+      minY: Math.min(minY, maxY),
+      maxY: Math.max(minY, maxY),
+    };
+  }
+
+  /* ---------------- drag + keyboard ---------------- */
+  function bindDrag(element, key) {
+    element.addEventListener('pointerdown', (event) => {
+      if (!isDebug) return;
+      if (event.pointerType === 'mouse' && event.button !== 0) return;
+      event.preventDefault();
+      if (element.setPointerCapture) element.setPointerCapture(event.pointerId);
+      element.focus({ preventScroll: true });
+      element.classList.add('dragging');
+      state.drag = {
+        element,
+        key,
+        startX: event.clientX,
+        startY: event.clientY,
+        originX: state[key].x,
+        originY: state[key].y,
+        bounds: boundsFor(element),
+      };
+    });
+
+    element.addEventListener('pointermove', (event) => {
+      const drag = state.drag;
+      if (!drag || drag.element !== element) return;
+      const areaW = stage.clientWidth || 1;
+      const areaH = stage.clientHeight || 1;
+      let x = drag.originX + ((event.clientX - drag.startX) / areaW) * 100;
+      let y = drag.originY + ((event.clientY - drag.startY) / areaH) * 100;
+      const snap = Number(snapSel.value) || 0;
+      if (snap > 0) {
+        x = Math.round(x / snap) * snap;
+        y = Math.round(y / snap) * snap;
+      }
+      state[key].x = clamp(x, drag.bounds.minX, drag.bounds.maxX);
+      state[key].y = clamp(y, drag.bounds.minY, drag.bounds.maxY);
+      applyPositions();
+    });
+
+    const end = () => {
+      const drag = state.drag;
+      if (!drag || drag.element !== element) return;
+      state.drag = null;
+      element.classList.remove('dragging');
+      applyPositions();
+      persistDebugUrl();
+    };
+    element.addEventListener('pointerup', end);
+    element.addEventListener('pointercancel', end);
+  }
+
+  function bindKeys(element, key) {
+    element.addEventListener('keydown', (event) => {
+      if (!isDebug) return;
+      const deltas = {
+        ArrowLeft: [-1, 0],
+        ArrowRight: [1, 0],
+        ArrowUp: [0, -1],
+        ArrowDown: [0, 1],
+      };
+      const delta = deltas[event.key];
+      if (!delta) return;
+      event.preventDefault();
+      const step = event.shiftKey ? 1 : event.altKey ? 0.05 : 0.25;
+      const bounds = boundsFor(element);
+      state[key].x = clamp(state[key].x + delta[0] * step, bounds.minX, bounds.maxX);
+      state[key].y = clamp(state[key].y + delta[1] * step, bounds.minY, bounds.maxY);
+      applyPositions();
+      persistDebugUrl();
+    });
+  }
+
+  function bindInput(input, key, axis) {
+    input.addEventListener('change', () => {
+      if (input.value.trim() === '') {
+        syncInputs();
+        return;
+      }
+      const value = Number(input.value);
+      if (!Number.isFinite(value)) {
+        syncInputs();
+        return;
+      }
+      const element = key === 'p1' ? hotspot1 : hotspot2;
+      const bounds = boundsFor(element);
+      const min = axis === 'x' ? bounds.minX : bounds.minY;
+      const max = axis === 'x' ? bounds.maxX : bounds.maxY;
+      state[key][axis] = clamp(value, min, max);
+      applyPositions();
+      persistDebugUrl();
+    });
+  }
+
+  /* ---------------- toasts, links, x-ray ---------------- */
+  let toastTimer = 0;
+  function showToast(message) {
+    toastEl.textContent = message;
+    toastEl.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => toastEl.classList.remove('show'), 2300);
+  }
+
+  async function copyLink() {
+    const url = attackUrl();
+    try {
+      await navigator.clipboard.writeText(url);
+      showToast('Attack link copied');
+    } catch (error) {
+      linkOut.focus();
+      linkOut.select();
+      try {
+        document.execCommand('copy');
+        showToast('Attack link copied');
+      } catch (fallbackError) {
+        showToast('Copy failed — select the link manually');
+      }
+    }
+  }
+
+  function openAttackNewTab() {
+    window.open(attackUrl(), '_blank', 'noopener');
+  }
+
+  function openAttackSameTab() {
+    window.location.href = attackUrl();
+  }
+
+  function setXray(on) {
+    stage.classList.toggle('xray', on);
+    xrayBtn.textContent = on ? 'POC: hide hidden layer' : 'POC: reveal hidden layer';
+    proofXray.textContent = on ? 'Hide hidden layer' : 'Reveal hidden layer';
+    $('#xrayBadge').setAttribute('aria-hidden', String(!on));
+    hotspot1.querySelector('.hs-label').textContent = on ? 'Real target 1' : 'Click point 1';
+    hotspot2.querySelector('.hs-label').textContent = on ? 'Real target 2' : 'Click point 2';
+    if (state.solved) proof.classList.toggle('peek', on);
+  }
+
+  function toggleXray() {
+    setXray(!stage.classList.contains('xray'));
+  }
+
+  function resetPositions() {
+    state.p1 = { ...DEFAULTS.p1 };
+    state.p2 = { ...DEFAULTS.p2 };
+    applyPositions();
+    persistDebugUrl();
+    showToast('Positions reset to defaults');
+  }
+
+  /* ---------------- attack flow ---------------- */
+  function setStepUI() {
+    sd1.classList.toggle('on', state.step >= 1);
+    sd2.classList.toggle('on', state.step >= 2);
+    attackerStep.textContent = state.solved ? 'COMPLETE' : state.step === 0 ? 'STEP 1 OF 2' : 'STEP 2 OF 2';
+  }
+
+  hotspot1.addEventListener('click', () => {
+    if (isDebug || state.targetUrl || state.solved || state.step !== 0) return;
+    state.step = 1;
+    hotspot1.style.pointerEvents = 'none';
+    hotspot1.disabled = true;
+    bait1.classList.add('done');
+    bait1.querySelector('.bait-label').textContent = 'Verified';
+    bait2.classList.remove('locked');
+    attackerMsg.textContent = 'Step 1 verified. One more tap to release your reward.';
+    bankStatus.textContent = 'Point 1 verified — awaiting point 2';
+    setStepUI();
+    showToast('Step 1 complete — tap “Confirm & claim”');
+  });
+
+  hotspot2.addEventListener('click', () => {
+    if (isDebug || state.targetUrl || state.solved) return;
+    if (state.step === 0) {
+      attackerMsg.textContent = 'Start with “Claim $500” above.';
+      bait1.classList.remove('flash');
+      void bait1.offsetWidth;
+      bait1.classList.add('flash');
+      showToast('Complete step 1 first');
+      return;
+    }
+    if (state.step !== 1) return;
+
+    state.step = 2;
+    state.solved = true;
+    hotspot2.style.pointerEvents = 'none';
+    hotspot2.disabled = true;
+    bait2.classList.add('done');
+    bait2.querySelector('.bait-label').textContent = 'Claimed';
+    attackerMsg.textContent = 'Reward approved — thank you!';
+    bankStatus.textContent = '✓ Transfer authorized — $4,999.00';
+    bankStatus.classList.add('ok');
+    setStepUI();
+
+    stage.classList.add('solved');
+    proof.setAttribute('aria-hidden', 'false');
+    const max = Math.max(centerDelta(hotspot1, bait1), centerDelta(hotspot2, bait2));
+    proofErr.textContent = `${max.toFixed(3)} px`;
+    proofPos.textContent = `${fmt(state.p1.x)}%, ${fmt(state.p1.y)}% → ${fmt(state.p2.x)}%, ${fmt(state.p2.y)}%`;
+    showToast('Clickjacking complete — 2 clicks stolen');
+  });
+
+  /* Hover feedback on the bait while the pointer is over the invisible target. */
+  function withinRect(rect, x, y) {
+    return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
+  }
+
+  stage.addEventListener('pointermove', (event) => {
+    if (isDebug || state.targetUrl || state.solved) return;
+    const r1 = hotspot1.getBoundingClientRect();
+    const r2 = hotspot2.getBoundingClientRect();
+    bait1.classList.toggle('hover', state.step === 0 && withinRect(r1, event.clientX, event.clientY));
+    bait2.classList.toggle('hover', state.step >= 1 && withinRect(r2, event.clientX, event.clientY));
+  });
+
+  stage.addEventListener('pointerleave', () => {
+    bait1.classList.remove('hover');
+    bait2.classList.remove('hover');
+  });
+
+  /* ---------------- wiring ---------------- */
+  $('#copyBtn').addEventListener('click', copyLink);
+  $('#copyTop').addEventListener('click', copyLink);
+  $('#openBtn').addEventListener('click', openAttackNewTab);
+  $('#openTop').addEventListener('click', openAttackNewTab);
+  $('#goBtn').addEventListener('click', openAttackSameTab);
+  $('#resetBtn').addEventListener('click', resetPositions);
+  $('#restartBtn').addEventListener('click', () => location.reload());
+  $('#proofReplay').addEventListener('click', () => location.reload());
+  $('#loadTargetBtn').addEventListener('click', loadTargetFromInput);
+  $('#reloadTargetBtn').addEventListener('click', reloadTarget);
+  $('#clearTargetBtn').addEventListener('click', useBuiltInDemo);
+  targetUrlInput.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter') return;
+    event.preventDefault();
+    loadTargetFromInput();
+  });
+  targetFrame.addEventListener('load', onFrameLoad);
+  xrayBtn.addEventListener('click', toggleXray);
+  proofXray.addEventListener('click', toggleXray);
+
+  if (isDebug) {
+    bindDrag(hotspot1, 'p1');
+    bindDrag(hotspot2, 'p2');
+    bindKeys(hotspot1, 'p1');
+    bindKeys(hotspot2, 'p2');
+    bindInput(inputs.x1, 'p1', 'x');
+    bindInput(inputs.y1, 'p1', 'y');
+    bindInput(inputs.x2, 'p2', 'x');
+    bindInput(inputs.y2, 'p2', 'y');
+  }
+
+  /* ---------------- init ---------------- */
+  applyFramedState();
+  applyPositions();
+  requestAnimationFrame(() => {
+    applyPositions();
+    if (isDebug) scheduleAlign();
+  });
+
+  window.addEventListener('resize', () => applyPositions());
+  if ('ResizeObserver' in window) {
+    new ResizeObserver(() => applyPositions()).observe(stage);
+  }
+})();
+</script>
+</body>
+</html>
