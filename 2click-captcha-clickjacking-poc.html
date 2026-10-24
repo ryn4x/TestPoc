@@ -212,10 +212,14 @@
     background: #fff;
     opacity: 0;
     pointer-events: auto;
+    will-change: opacity;
     transition: opacity .3s ease;
   }
   html[data-mode="debug"] .frame-layer iframe { opacity: 1; }
-  html[data-mode="attack"] .frame-layer iframe { opacity: 0; }
+  /* Keep the attack iframe just above zero: fully transparent iframes are not
+     reliably hit-tested by every browser until they have been painted at a
+     non-zero opacity. 0.001 is visually invisible but keeps the click surface live. */
+  html[data-mode="attack"] .frame-layer iframe { opacity: .001; }
   .stage.xray .frame-layer iframe { opacity: .72; }
   .stage.framed .victim { display: none; }
 
@@ -345,17 +349,15 @@
   /* ---------- shared click boxes ---------- */
   .clickbox {
     position: absolute;
-    width: clamp(124px, 26%, 250px);
-    height: clamp(44px, 9%, 68px);
+    width: clamp(46px, 6cqw, 58px);
+    height: clamp(46px, 6cqw, 58px);
+    padding: 0;
     transform: translate(-50%, -50%);
     display: flex;
     align-items: center;
     justify-content: center;
-    gap: clamp(5px, .9cqw, 9px);
-    border-radius: 999px;
-    font: 750 clamp(10px, 1.42cqw, 15px)/1.1 var(--sans);
-    letter-spacing: -.01em;
-    white-space: nowrap;
+    gap: 0;
+    border-radius: 50%;
     z-index: 4;
   }
   #bait1, #hotspot1 { left: var(--x1); top: var(--y1); }
@@ -393,7 +395,30 @@
     0%, 100% { box-shadow: 0 12px 34px rgba(166, 239, 71, .22); }
     40% { box-shadow: 0 0 0 8px rgba(255, 84, 112, .35), 0 16px 44px rgba(255, 84, 112, .28); }
   }
-  .bico { font-size: 1.08em; line-height: 1; }
+  .bico { font-size: clamp(25px, 3.4cqw, 33px); line-height: 1; }
+  .bait-label {
+    position: absolute;
+    top: calc(100% + 5px);
+    left: 50%;
+    transform: translateX(-50%);
+    max-width: 150px;
+    padding: 2px 5px;
+    border-radius: 4px;
+    background: rgba(7, 14, 4, .78);
+    border: 1px solid rgba(188, 255, 87, .14);
+    color: #eaffc8;
+    font: 700 clamp(7px, .9cqw, 9px)/1.15 var(--mono);
+    text-align: center;
+    white-space: nowrap;
+    pointer-events: none;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, .6);
+  }
+  .bait.alt .bait-label {
+    background: rgba(4, 10, 20, .78);
+    border-color: rgba(119, 183, 255, .18);
+    color: #cfe7ff;
+  }
+  .stage.xray .bait-label { opacity: 0; }
 
   /* ---------- CAPTCHA hotspots ---------- */
   .hotspot {
@@ -450,7 +475,8 @@
     opacity: 0;
     pointer-events: none;
   }
-  html[data-mode="attack"] .hotspot { pointer-events: auto; }
+  html[data-mode="attack"] .hotspot { pointer-events: auto; clip-path: circle(50% at 50% 50%); }
+  html[data-mode="attack"] .stage.xray .hotspot { clip-path: none; }
   html[data-mode="debug"] .hotspot {
     pointer-events: auto;
     cursor: grab;
@@ -577,26 +603,6 @@
   }
   .stage.framed .bait .bico {
     font-size: clamp(18px, 2.6cqw, 23px);
-  }
-  .stage.framed .bait-label {
-    position: absolute;
-    top: calc(100% + 4px);
-    left: 50%;
-    transform: translateX(-50%);
-    max-width: 140px;
-    padding: 2px 4px;
-    border-radius: 4px;
-    background: rgba(7, 14, 4, .78);
-    color: #eaffc8;
-    font: 700 clamp(7px, .9cqw, 9px)/1.15 var(--mono);
-    text-align: center;
-    white-space: nowrap;
-    pointer-events: none;
-    text-shadow: 0 1px 2px rgba(0, 0, 0, .6);
-  }
-  .stage.framed .bait.alt .bait-label {
-    background: rgba(4, 10, 20, .78);
-    color: #cfe7ff;
   }
 
   /* ---------- victim bank page ---------- */
